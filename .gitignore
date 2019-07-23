@@ -1,0 +1,12 @@
+
+# config file
+.ipynb_checkpoints/
+.vscode/
+.idea/
+__pycache__/
+
+# data
+*.pic
+*.pickle
+data-training.csv
+
