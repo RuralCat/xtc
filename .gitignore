@@ -4,9 +4,19 @@
 .vscode/
 .idea/
 __pycache__/
+.DS_Store
 
 # data
 *.pic
 *.pickle
 data-training.csv
+
+# XTXKIt
+XTXStarterKit-master/.DS_Store
+XTXStarterKit-master/*zip
+XTXStarterKit-master/python/.DS_Store
+XTXStarterKit-master/python/*.hdf5
+XTXStarterKit-master/python/xtxenv/
+
+
 

@@ -1,5 +1,6 @@
 import subprocess
 from core import Submission
+from model import MLPModel
 
 """
 PYTHON submission
@@ -67,6 +68,9 @@ class MySubmission(Submission):
 
         self.debug_print("Use the print function `self.debug_print(...)` for debugging purposes, do NOT use the default `print(...)`")
 
+        # create model
+        model = MLPModel(time_step=15, window_size=10, weights='model.hdf5')
+
         while(True):
             """
             NOTE: Only one of (get_next_data_as_string, get_next_data_as_list, get_next_data_as_numpy_array) can be used
@@ -76,10 +80,11 @@ class MySubmission(Submission):
             """
 
             # data = self.get_next_data_as_list()
-            # data = self.get_next_data_as_numpy_array()
-            data = self.get_next_data_as_string()
+            data = self.get_next_data_as_numpy_array()
+            # data = self.get_next_data_as_string()
 
-            prediction = self.get_prediction(data)
+            # prediction = self.get_prediction(data)
+            prediction = model.predict(data)
 
             """
             submit_prediction(prediction) MUST be used to submit your prediction for the current row of data
