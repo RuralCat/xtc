@@ -56,39 +56,42 @@ def data_sliding(data, y=None, time_step=60, data_format='time_first'):
         return _data
 
 
-def split_data(data, y, split=[0.6, 0.1, 0.3], sampling=5, shuffle=False, quant=False):
-    # copy data to avoid modify raw data
-    # data = np.copy(data)
+def split_data(datas,split=[0.6, 0.1, 0.3], sampling=5, shuffle=False):
+    # parse inputs
+    if isinstance(datas, np.ndarray):
+        datas = [datas]
+    elif not isinstance(datas, list):
+        raise TypeError('datas should be a numpy.ndarray or list instance')
+    else:
+        for d in datas:
+            if not isinstance(d, np.ndarray):
+                raise TypeError('member in datas should be ndarray')
 
-    # label quantification to 11 class
-    if quant:
-        y = XTXDataset.label_quantification(y)
-    
     # sampling
-    data = data[::sampling]
-    y = y[::sampling]
+    for k in range(len(datas)):
+        datas[k] = datas[k][::sampling]
+        if shuffle:
+            # set random state
+            np.random.seed(20190717)
+            datas[k] = np.random.permutation(datas[k])
 
-    # shuffle
-    if shuffle:
-        np.random.seed(20190717)
-        y = np.random.permutation(y)
-        np.random.seed(20190717)
-        data = np.random.permutation(data)
-    
     # split data
     assert len(split) == 3
     split = np.cumsum(np.array(split) / sum(split))
-    nb_sample = data.shape[0]
+    nb_sample = datas[0].shape[0]
     at_train = int(nb_sample * split[0])
     at_val = int(nb_sample * split[1])
 
-    train_x, val_x, test_x = (data[:at_train], data[at_train:at_val], data[at_val:])
-    train_y, val_y, test_y = (y[:at_train], y[at_train:at_val], y[at_val:])
+    trains, vals, tests = [], [], []
+    for d in datas:
+        trains += [d[:at_train]]
+        vals += [d[at_train:at_val]]
+        tests += [d[at_val:]]
 
     # show
     print("train:{}, val:{}, test:{}".format(at_train, at_val-at_train, nb_sample-at_val))
 
-    return (train_x, train_y), (val_x, val_y), (test_x, test_y)
+    return trains, vals, tests
 
 
 class XTXDataset:
@@ -205,12 +208,43 @@ def dataset_slide_whiten_norm():
     mean = np.reshape(x, (-1, 1000))
 
 
-def dataset_slide_norm(time_step=60, norm_window_size=60):
+def dataset_slide_norm(time_step=60, norm_window_size=60, label_smoothing=False):
     from normlization import slide_norm
     raw_data = load_raw_data()
     normed_data = slide_norm(raw_data[:, :60], window_size=norm_window_size)
-    x, y = data_sliding(normed_data, raw_data[:, 60], time_step=time_step)
-    return split_data(x, y, split=[0.85, 0.1, 0.05], sampling=5)
+    if label_smoothing:
+        y = ema(raw_data[:, 60], 5)
+    else:
+        y = raw_data[:, 60]
+    x, y = data_sliding(normed_data, y, time_step=time_step)
+    return split_data(x, y, split=[0.6, 0.1, 0.3], sampling=5)
+
+
+def ema(x, n):
+        y = np.zeros_like(x)
+        y[0] = x[0]
+        for i in range(1, x.shape[0]):
+            y[i] = (n - 1) / (n + 1) * y[i - 1] + 2 / (n + 1) * x[i]
+        return y
+
+def ma(x, n):
+    y = np.lib.stride_tricks.as_strided(x, (x.shape[0]-n+1, n), (x.strides[0], x.strides[0]))
+    return np.mean(y, axis=1)
+
+def ema_rate_cum_y():
+    # load data
+    raw_data = load_raw_data()
+    askrate0 = raw_data[:, 0]
+    y = raw_data[:, 60]
+    # processing
+    ema_askrate0 = ema(askrate0, 66)
+    cum_y = np.cumsum(y)
+    normed_askrate0 = (ema_askrate0 - np.mean(ema_askrate0)) * np.std(cum_y) / np.std(ema_askrate0) + np.mean(cum_y)
+    # show
+    plt.plot(normed_askrate0[110:], label='askrate')
+    plt.plot(cum_y, label='y')
+    plt.legend()
+    plt.show()
 
 
 if __name__ == '__main__':

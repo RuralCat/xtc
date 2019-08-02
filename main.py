@@ -23,16 +23,14 @@ def tf_score(y, y_pred):
     return K.sum(K.pow(y - y_pred, 2)) / K.sum(K.pow(y, 2))
 
 
-def model_score(model, train_x, train_y, test_x, test_y):
-    train_y_pred = model.predict(train_x, batch_size=128, verbose=1)
-    train_score = score(train_y, train_y_pred)
-    print('train score: {:.5f}'.format(train_score))
+def model_score(model, train_x, train_y, val_x, val_y, test_x, test_y):
+    scores = []
+    for x, y, s in zip([train_x, val_x, test_x], [train_y, val_y, test_y], ['train', 'val', 'test']):
+        pred = model.predict(x, batch_size=512, verbose=1)
+        scores.append(score(y, pred))
+        print('{} score: {:.5f}'.format(s, scores[-1]))
 
-    test_y_pred = model.predict(test_x, batch_size=128, verbose=1)
-    test_score = score(test_y, test_y_pred)
-    print('test score: {:.5f}'.format(test_score))
-
-    return train_score, test_score
+    return scores
 
 
 if __name__ == '__main__':
