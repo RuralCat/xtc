@@ -10,6 +10,7 @@ __pycache__/
 *.pic
 *.pickle
 data-training.csv
+datas/
 
 # XTXKIt
 XTXStarterKit-master/.DS_Store
@@ -17,6 +18,12 @@ XTXStarterKit-master/*zip
 XTXStarterKit-master/python/.DS_Store
 XTXStarterKit-master/python/*.hdf5
 XTXStarterKit-master/python/xtxenv/
+
+# OneCycle
+OneCycle/
+
+# test script
+demo.py
 
 
 

@@ -1,34 +1,18 @@
-
-import pandas as pd
-import numpy as np
 import os
-from keras.utils import to_categorical
+
 import pickle
-import seaborn as sb
-import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+from keras.utils import Sequence
 
-
-def train_test_plot(train_data, test_data=None, kde=True, cumulative=True, title=None):
-    axe = plt.axes() 
-    if kde:
-        sb.kdeplot(train_data, cumulative=cumulative, legend=True, ax=axe, label='train')
-        if test_data is not None:
-            sb.kdeplot(test_data, cumulative=cumulative, legend=True, ax=axe, label='test')
-    else:
-        sb.distplot(train_data, hist=False, kde=True, label='train')
-        if test_data is not None:
-            sb.distplot(test_data, hist=False, kde=True, label='test')
-    axe.legend()
-    if title and isinstance(title, str):
-        plt.title(title)
-    plt.show()
-
-
-def data_statistic(data, window_size):
-    pass
+from core.dataset_utils import data_sliding
+from core.dataset_utils import ema
+from core.dataset_utils import split_data
+from normlization import slide_norm
 
 
 def load_raw_data(save_path='raw_data.pic'):
+    # read data
     if os.path.exists(save_path):
         with open(save_path, 'rb') as f:
             data = pickle.load(f)
@@ -36,161 +20,156 @@ def load_raw_data(save_path='raw_data.pic'):
         data = np.nan_to_num(np.array(pd.read_csv('data-training.csv'), dtype=np.float32))
         with open(save_path, 'wb') as f:
             pickle.dump(data, f)
+    # parse data
+    # TODO
+
     return data
 
 
-def data_sliding(data, y=None, time_step=60, data_format='time_first'):
-    nb_features = data.shape[-1]
-    nb_sample = data.shape[0] - time_step + 1
-    strides = np.array([data.strides[0], data.strides[0], data.strides[1]])
+days_index = [
+    0, 46013, 94711, 144351, 256399, 359111, 464191, 573884,
+    644312, 703509, 759651, 899324, 953594, 1055570, 1105677,
+    1153404, 1209507, 1342361, 1390259, 1437723, 1486955, 1545235,
+    1603361, 1658726, 1718263, 1777602, 1877675, 1912710, 2022189,
+    2081213, 2198907, 2271018, 2341003, 2467227, 2515866, 2573037,
+    2677551, 2732082, 2788996, 2856131, 2971348
+]
 
-    #
-    output_shape = (nb_sample, time_step, nb_features)
-    _data = np.lib.stride_tricks.as_strided(data, shape=output_shape, strides=strides)
-    if data_format == 'time_last':
-        _data = np.transpose(_data, [0, 2, 1])
-
-    if y is not None:
-        return _data, y[time_step - 1:]
-    else:
-        return _data
-
-
-def split_data(datas,split=[0.6, 0.1, 0.3], sampling=5, shuffle=False):
-    # parse inputs
-    if isinstance(datas, np.ndarray):
-        datas = [datas]
-    elif not isinstance(datas, list):
-        raise TypeError('datas should be a numpy.ndarray or list instance')
-    else:
-        for d in datas:
-            if not isinstance(d, np.ndarray):
-                raise TypeError('member in datas should be ndarray')
-
-    # sampling
-    for k in range(len(datas)):
-        datas[k] = datas[k][::sampling]
-        if shuffle:
-            # set random state
-            np.random.seed(20190717)
-            datas[k] = np.random.permutation(datas[k])
-
-    # split data
-    assert len(split) == 3
-    split = np.cumsum(np.array(split) / sum(split))
-    nb_sample = datas[0].shape[0]
-    at_train = int(nb_sample * split[0])
-    at_val = int(nb_sample * split[1])
-
-    trains, vals, tests = [], [], []
-    for d in datas:
-        trains += [d[:at_train]]
-        vals += [d[at_train:at_val]]
-        tests += [d[at_val:]]
-
-    # show
-    print("train:{}, val:{}, test:{}".format(at_train, at_val-at_train, nb_sample-at_val))
-
-    return trains, vals, tests
+days_index_nonzero = [
+    11, 46018, 94728, 144366, 256401, 359115, 464198,
+    573890, 644316, 703515, 759658, 899331, 953601, 1055586,
+    1105689, 1153414, 1209523, 1342373, 1390261, 1437724, 1486959,
+    1545254, 1603374, 1658744, 1718275, 1777610, 1877708, 1912718,
+    2022200, 2081225, 2198924, 2271031, 2341017, 2467236, 2515868,
+    2573070, 2677555, 2732084, 2789011, 2856151, 2971364
+]
 
 
 class XTXDataset:
-    def __init__(self, filename, norm=True):
+    def __init__(self, filename='datas/raw_data.pic'):
         # read data
-        if isinstance(filename, np.ndarray):
-            self._data = filename
+        self._filename = filename
+        self.reset_raw_data()
+
+    def reset_raw_data(self):
+        self.raw_data = load_raw_data(self._filename)
+        print("Time series length: {}".format(self.raw_data.shape[0]))
+
+    def delete_invalid_rows(self):
+        index = np.transpose(np.nonzero(self.raw_data[:, 14] == 0))[:, 0]
+        self.raw_data = np.delete(self.raw_data, list(index), axis=0)
+
+    def split_rate_size(self, data=None):
+        # return ask_rate, ask_size, bid_rate, bid_size
+        if data is None:
+            return self.raw_data[:, :15], self.raw_data[:, 15:30], self.raw_data[:, 30:45], self.raw_data[:, 45:60]
         else:
-            self._data = self._read_xtx_data(filename)
-            # normlization
-            if norm:
-                self._data = self._normlization()
+            assert data.ndims == 2 and data.shape[1] == 60
+            return data[:, :15], data[:, 15:30], data[:, 30:45], data[:, 45:60]
 
-    def _read_xtx_data(self, filename):
-        return np.nan_to_num(np.array(pd.read_csv(filename), dtype=np.float32))
+    def split_to_days(self):
+        _diff = np.diff(np.mean(np.diff(self.raw_data[:, :15], axis=1), axis=1))
+        days_index = np.transpose(np.nonzero(_diff < -1))[:, 0]
+        days_data = [self.raw_data[:days_index[0]]]
+        for i in range(len(days_index) - 1):
+            days_data += [self.raw_data[days_index[i]:days_index[i + 1]]]
+        days_data += [self.raw_data[days_index[-1]:]]
 
-    def _normlization(self):
-        # normed_data = np.zeros_like(self._data)
-        normed_data = np.zeros(self._data.shape, dtype=self._data.dtype)
+        return days_data
 
-        # ask & bid rate normlization
-        normed_data[:, :15] = self._data[:, :15] - np.expand_dims(self._data[:, 0], axis=1)
-        normed_data[:, 30:45] = self._data[:, 30:45] - np.expand_dims(self._data[:, 0], axis=1)
+    @property
+    def features(self):
+        return self.raw_data[:, :60]
 
-        # ask & bid size normlization
-        asksize_book = {x: 0 for x in np.arange(1500, 1800, 0.5)}
-        bidsize_book = {x: 0 for x in np.arange(1500, 1800, 0.5)}
+    @property
+    def avbv_features(self):
+        # [ask_rate_i, ask_size_i, bid_rate_i, bid_size_i] * 15
+        return np.concatenate([self.raw_data[:, i:60:15] for i in range(15)], axis=1)
 
-        temp_asksize_book = {}
-        temp_bidsize_book = {}
-        for i in range(self._data.shape[0]):
-            for j in range(15):
-                # for ask
-                if self._data[i, j] not in temp_asksize_book and j < 12:
-                    normed_data[i, j + 15] = self._data[i, j + 15]
-                else:
-                    normed_data[i, j + 15] = self._data[i, j + 15] - asksize_book[self._data[i, j]]
-                # update ask size book
-                asksize_book[self._data[i, j]] = self._data[i, j + 15]
+    @property
+    def rate(self):
+        return np.concatenate([self.raw_data[:, :15], self.raw_data[:, 30:45]], axis=1)
 
-            for j in range(30, 45):
-                # for bid
-                if self._data[i, j] not in temp_bidsize_book and j < 42:
-                    normed_data[i, j + 15] = self._data[i, j + 15]
-                else:
-                    normed_data[i, j + 15] = self._data[i, j + 15] - bidsize_book[self._data[i, j]]
-                # update bid size book
-                bidsize_book[self._data[i, j]] = self._data[i, j + 15]
+    @property
+    def mid_rate(self):
+        return (self.features[:, 0] + self.features[:, 30]) / 2
 
-            # update temp book
-            temp_asksize_book = {self._data[i, k]: self._data[i, k + 15] for k in range(15)}
-            temp_bidsize_book = {self._data[i, k + 30]: self._data[i, k + 45] for k in range(15)}
+    @property
+    def size(self):
+        return np.concatenate([self.raw_data[:, 15:30], self.raw_data[:, 45:60]], axis=1)
 
-        # y normlization
-        normed_data[:, 60] = self._data[:, 60]
+    @property
+    def label_y(self):
+        return self.raw_data[:, 60]
 
+    def redefine_label_y(self, n=87):
+        return self.mid_rate[n:] - self.mid_rate[:-n]
+
+    def label_y_sign(self):
+        return np.sign(self.label_y)
+
+    def label_y_value(self):
+        return np.abs(self.label_y)
+
+    def data_generator(self, data_func, valid_data_index, batch_size=256, shuffle=True, **kwargs):
         #
-        normed_data[normed_data < -1000] = 0
-
-        return normed_data
-
-    def _tile(self, data, n):
-        x = np.zeros((data.shape[0]-n+1, data.shape[1]-1, n), dtype=np.float32)
-        for i in range(n):
-            if i > 0:
-                x[..., i] = data[n-i-1:-i, :-1]
-            else:
-                x[..., 0] = data[n-1:, :-1]
-        x = np.transpose(x, [0, 2, 1])
-        y = data[n-1:, -1]
-        return x, y
-
-    @staticmethod
-    def label_quantification(y, reversed=False):
-        y = np.copy(y)
-        if reversed:
-            return y * 0.25 - 1.25
-        else:
-            y[y > 1.25] = 1.25
-            y[y < -1.25] = -1.25
-            return to_categorical((y + 1.25) / 0.25)
-
-    def train_data(self, split=0.1, use_tile=False, tile_n=0, sampling=1, label_quant=True):
+        batch_id = 0
+        batch_inds = valid_data_index
         #
-        data, y = self._tile(self._data, tile_n) if use_tile else (self._data[:, :-1], self._data[:,-1])
-        if label_quant:
-            y = XTXDataset.label_quantification(y)
-        nb_train = np.int(data.shape[0] * (1 - split))
-        # train data
-        train_x = data[:nb_train:sampling, :60]
-        train_y = y[:nb_train:sampling]
-        # test data
-        test_x = data[nb_train::sampling, :60]
-        test_y = y[nb_train::sampling]
-        return train_x, train_y, test_x, test_y
+        while True:
+            print('batch_id:', batch_id)
+            # shuffle
+            if batch_id == 0 or batch_id >= len(batch_inds):
+                batch_id == 0
+                if shuffle: batch_inds = np.random.permutation(batch_inds)
+            #
+            inputs = []
+            label_y = []
+            for i in range(batch_size):
+                _data, _y = data_func(self.raw_data, batch_inds[batch_id + i], **kwargs)
+                inputs.append(_data)
+                label_y.append(_y)
+            yield (np.array(inputs), np.array(label_y))
+            batch_id = batch_id + batch_size
 
 
-    def show(self):
-        pass
+class DataGenerator(Sequence):
+    def __init__(self, data, indexs, batch_size=256, shuffle=True):
+        self._data = data
+        self._indexs = indexs
+        self.batch_size = batch_size
+        self.shuffle = shuffle
+        self.on_epoch_end()
+
+    def __len__(self):
+        return len(self._indexs) // self.batch_size
+
+    def __getitem__(self, index):
+        inputs = []
+        label_y = []
+        for i in range(self.batch_size):
+            _data, _y = slide_norm_data_func(self._data, self._indexs[index * self.batch_size + i])
+            inputs.append(_data)
+            label_y.append(_y)
+        return np.array(inputs), np.array(label_y)
+
+    def on_epoch_end(self):
+        if self.shuffle:
+            self._indexs = np.random.permutation(self._indexs)
+
+
+def slide_norm_data_func(data, index, time_steps=15, norm_window_size=10):
+    # data should be raw data
+    if data.shape[1] != 61:
+        raise
+    if index < time_steps + norm_window_size - 2:
+        raise IndexError("index out of bound")
+    _data = slide_norm(data[index - time_steps - norm_window_size + 2: index + 1, :60],
+                       window_size=norm_window_size,
+                       padding=False)
+    _y = data[index, 60]
+
+    return _data, _y
 
 
 def dataset_whiten_norm():
@@ -202,11 +181,6 @@ def dataset_whiten_norm():
     (train_x, train_y), (val_x, val_y), (test_x, test_y) = split_data(x, y)
     return (train_x, train_y), (val_x, val_y), (test_x, test_y)
 
-def dataset_slide_whiten_norm():
-    raw_data = load_raw_data()
-    x = raw_data[:, :60]
-    mean = np.reshape(x, (-1, 1000))
-
 
 def dataset_slide_norm(time_step=60, norm_window_size=60, label_smoothing=False):
     from normlization import slide_norm
@@ -217,40 +191,33 @@ def dataset_slide_norm(time_step=60, norm_window_size=60, label_smoothing=False)
     else:
         y = raw_data[:, 60]
     x, y = data_sliding(normed_data, y, time_step=time_step)
-    return split_data(x, y, split=[0.6, 0.1, 0.3], sampling=5)
-
-
-def ema(x, n):
-        y = np.zeros_like(x)
-        y[0] = x[0]
-        for i in range(1, x.shape[0]):
-            y[i] = (n - 1) / (n + 1) * y[i - 1] + 2 / (n + 1) * x[i]
-        return y
-
-def ma(x, n):
-    y = np.lib.stride_tricks.as_strided(x, (x.shape[0]-n+1, n), (x.strides[0], x.strides[0]))
-    return np.mean(y, axis=1)
-
-def ema_rate_cum_y():
-    # load data
-    raw_data = load_raw_data()
-    askrate0 = raw_data[:, 0]
-    y = raw_data[:, 60]
-    # processing
-    ema_askrate0 = ema(askrate0, 66)
-    cum_y = np.cumsum(y)
-    normed_askrate0 = (ema_askrate0 - np.mean(ema_askrate0)) * np.std(cum_y) / np.std(ema_askrate0) + np.mean(cum_y)
-    # show
-    plt.plot(normed_askrate0[110:], label='askrate')
-    plt.plot(cum_y, label='y')
-    plt.legend()
-    plt.show()
+    return split_data([x, y], split=[0.6, 0.1, 0.3], sampling=1)
 
 
 if __name__ == '__main__':
     import pickle
-    with open('normed_data.pickle', 'rb') as f:
-        normed_data = pickle.load(f)
-    dataset = XTXDataset(normed_data)
+    from main import simple_model, tf_score
+    from keras.optimizers import Adam
 
-    _, _, _, _ = dataset.train_data(split=0.3, use_tile=True, tile_n=60, sampling=20, label_quant=False)
+    # create dataset
+    dt = XTXDataset()
+    dt.delete_invalid_rows()
+    # create model
+    model = simple_model(time_step=15, regression=True)
+    model.compile(Adam(2e-4), loss=tf_score, metrics=['accuracy'])
+    # setting
+    time_step = 15
+    norm_wsz = 10
+    batch_size = 256
+    total_sample = dt.raw_data.shape[0]
+    train_index = np.arange(time_step + norm_wsz - 2, np.int(total_sample * 0.7), 5)
+    val_index = np.arange(train_index[-1], np.int(total_sample * 0.8), 5)
+    train_gen = DataGenerator(dt.raw_data, train_index)
+    val_gen = DataGenerator(dt.raw_data, val_index)
+
+    train_steps = len(train_index) // batch_size
+    val_steps = len(val_index) // batch_size
+    # train
+    model.fit_generator(train_gen, steps_per_epoch=train_steps, epochs=2,
+                        validation_data=val_gen, validation_steps=val_steps, max_queue_size=16,
+                        workers=16, use_multiprocessing=True)
