@@ -1,6 +1,5 @@
-
-import keras.layers as KL
-import keras.backend as K
+import tensorflow.keras.layers as KL
+import tensorflow.keras.backend as K
 import tensorflow as tf
 
 class PreprocessingLayer(KL.Layer):
@@ -34,3 +33,19 @@ class PreprocessingLayer(KL.Layer):
     def compute_output_shape(self, input_shape):
         return (input_shape[0], self.time_steps, input_shape[2])
 
+class ConditionPass(KL.Layer):
+    def __init__(self, alpha=0.5, **kwargs):
+        self._alpha = alpha
+        super(ConditionPass, self).__init__(**kwargs)
+
+    def call(self, inputs, **kwargs):
+        x = inputs[0]
+        prob = inputs[1]
+        # pass_ = tf.ones_like(x)
+        # not_pass_ = tf.zeros_like(x)
+        # pass_ = tf.where(tf.greater(prob, pass_*self._alpha), pass_, not_pass_)
+
+        return tf.multiply(x, prob)
+
+    def compute_output_shape(self, input_shape):
+        return input_shape

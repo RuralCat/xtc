@@ -8,7 +8,7 @@ import time, subprocess, sys, os, platform, socket, math
 # Change these paths to point to your local machine
 cwd = os.path.split(os.getcwd())[0]
 RESULT_LOCATION = os.path.join(cwd, 'results/result.txt')
-DATASET_LOCATION = os.path.join(cwd, 'data.csv')
+DATASET_LOCATION = os.path.join(cwd, 'data_p0.csv')
 SCORE_LOCATION = os.path.join(cwd, 'results/score.txt')
 
 INCLUDE_Y_VALUE = False
@@ -45,7 +45,7 @@ if not os.path.isfile(DATASET_LOCATION):
 
 
 if platform.system() == "Windows":
-    python_tag = "py"
+    python_tag = "python"
 else:
     python_tag = "python3"
 
@@ -57,6 +57,7 @@ p = subprocess.Popen([python_tag, "submission.py"], stdin=subprocess.PIPE,
 
 output = follow(p)
 
+since = time.time()
 with open(DATASET_LOCATION) as data_file, open(RESULT_LOCATION, 'w') as result_file:
     # Skip header
     header = data_file.readline()
@@ -79,10 +80,14 @@ with open(DATASET_LOCATION) as data_file, open(RESULT_LOCATION, 'w') as result_f
             print(p.stderr.read().decode("utf-8"))
             raise
 
-        if lines_processed % 10000 == 0:
-            print(f"Submitted a prediction for {lines_processed} data rows.")
-        
+        if lines_processed % 100 == 0:
+            print(f"Submitted a prediction for {lines_processed} data rows,",
+                  f"elapsed time {time.time() - since}")
+        # if lines_processed > 3000:
+        #     break
+
         pred = output.__next__().decode("utf-8")
+        # print(lines_processed, pred)
 
         if not isinstance(float(pred), float) or math.isnan(float(pred)):
             raise ValueError(f"ValueError: expected type <int> or <float> for prediction, got {pred}")

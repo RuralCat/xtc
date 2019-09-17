@@ -3,7 +3,7 @@ import sys
 ### Changes you make to this file will not persist to our testing servers
 
 RESULT_LOCATION = 'results/output.txt'
-DATASET_LOCATION = 'data.csv'
+DATASET_LOCATION = 'data_p0.csv'
 SCORE_LOCATION = 'results/score.txt'
 
 argc = len(sys.argv)
@@ -28,9 +28,14 @@ with open(DATASET_LOCATION, 'r') as dp:
             if i == 0:
                 i += 1
                 continue # don't read first line of data because it contains headers
+            if i > 3000:
+                pass
+                # break
+            else:
+                i += 1
             y_true = float(line.split(',')[-1][:-1])
 
-            guess_line = sp.readline()[:-1] 
+            guess_line = sp.readline()[:-1]
             y_guess = float(guess_line)
             
             err2_tally += (y_true - y_guess) ** 2

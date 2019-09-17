@@ -5,14 +5,16 @@ from __future__ import print_function
 
 import itertools
 
-import keras.layers as KL
-from keras.initializers import *
-from keras.models import Model
-
-from core.layers.normalization import PreprocessingLayer
+from core.layers import PreprocessingLayer
+from core.layers import ConditionPass
 from core.losses import score
 from core.dataset_utils import CSVRecord
-from OneCycle.clr import LRFinder
+
+
+import tensorflow.keras.layers as KL
+import tensorflow.keras.regularizers as regularizers
+import tensorflow.keras.backend as K
+from tensorflow.keras.models import Model as TFModel
 
 
 def simple_model(time_step, regression=False):
@@ -41,7 +43,7 @@ def simple_model(time_step, regression=False):
     else:
         x = KL.Dense(2, activation='softmax')(x)
 
-    model = Model(inputs=inputs, outputs=x)
+    model = TFModel(inputs=inputs, outputs=x)
 
     return model
 
@@ -71,11 +73,11 @@ def simple_cnn():
 
     outputs = x
 
-    return Model(inputs=inputs, outputs=outputs)
+    return TFModel(inputs=inputs, outputs=outputs)
 
 
 def dense_unit(x, units, dropout=0.45, batch_norm=False, leak_relu=True, relu_alpha=0.1, weight_decay=0.0):
-    regularizer = KL.regularizers.l2(weight_decay)
+    regularizer = regularizers.l2(weight_decay)
     kernel_initializer = {0: 'glorot_uniform', 1: 'he_normal', 2: 'he_uniform'}[0]
     x = KL.Dense(units,
                  use_bias=False,
@@ -132,7 +134,7 @@ def simple_mlp(time_step=15, regression=False, dropout=0.45, batch_norm=False, l
 
     outputs = x
 
-    return Model(inputs=inputs, outputs=outputs)
+    return TFModel(inputs=inputs, outputs=outputs)
 
 
 def mid_price_move_mlp(time_step, nb_features, regression=True, dropout=0.45, batch_norm=False):
@@ -200,7 +202,7 @@ def deep_lob(time_steps=100, nb_features=40, regression=False):
     else:
         x = KL.Dense(3, activation='softmax')(x)
 
-    return Model(inputs=inputs, outputs=x)
+    return TFModel(inputs=inputs, outputs=x)
 
 
 def lstm_fcn(time_step=60, regression=False, dropout=0.8, batch_norm=True):
@@ -237,7 +239,7 @@ def lstm_fcn(time_step=60, regression=False, dropout=0.8, batch_norm=True):
     else:
         x = KL.Dense(2, activation='softmax')(x)
 
-    return Model(inputs=input, outputs=x)
+    return TFModel(inputs=input, outputs=x)
 
 
 def rate_size_fusion(time_step=60, dropout=0.45):
@@ -266,11 +268,11 @@ def rate_size_fusion(time_step=60, dropout=0.45):
     x = dense_unit(x, 2048, dropout=0)
     x = KL.Dense(1, activation='linear')(x)
 
-    return Model(inputs=[rates, sizes], outputs=x)
+    return TFModel(inputs=[rates, sizes], outputs=x)
 
 
 def get_weight_grad(model, data, label):
-    assert isinstance(model, Model)
+    assert isinstance(model, TFModel)
     means = []
     stds = []
 
@@ -292,7 +294,7 @@ def get_weight_grad(model, data, label):
 
 def gpu_setting():
     import tensorflow as tf
-    from keras.backend.tensorflow_backend import set_session
+    from tensorflow.keras.backend import set_session
     import os
     os.environ["CUDA_VISIBLE_DEVICES"] = "0"
     config = tf.ConfigProto()
@@ -300,7 +302,7 @@ def gpu_setting():
     set_session(tf.Session(config=config))
 
 
-class XTXModel(object):
+class Model(object):
     def __init__(self, config, **kwargs):
         # initial status
         self.built = False
@@ -308,11 +310,11 @@ class XTXModel(object):
         self.data_settled = False
         # set params
         self._config = config
-        self._model = self._build_model(**kwargs)
+        self._model = self.build_model(**kwargs)
         # assert isinstance(self._config, XTXConfig)
-        assert isinstance(self._model, Model), "self.build_model should return a keras Model"
+        assert isinstance(self._model, TFModel), "self.build_model should return a keras Model"
 
-    def _build_model(self):
+    def build_model(self):
         # clear session & release gpu memory before build a new model
         # clear session
         # K.clear_session()
@@ -326,15 +328,11 @@ class XTXModel(object):
         for arg_name in arg_names:
             if arg_name in kwargs:
                 args.append(kwargs[arg_name])
+            elif arg_name in self._config:
+                args.append(self._config[arg_name])
             else:
-                if arg_name in self._config:
-                    args.append(self._config[arg_name])
-                else:
-                    raise IndexError(arg_name + " is not exist in self._config dict and arguments!")
-        if len(args) == 1:
-            return args[0]
-        else:
-            return args
+                raise IndexError(arg_name + " is not exist in self._config dict and arguments!")
+        return args if len(args) > 1 else args[0]
 
     def _parse_datas(self, **kwargs):
         # get args
@@ -343,22 +341,10 @@ class XTXModel(object):
         args = dict(time_steps=time_steps, norm_window_size=norm_window_size, levels=levels)
         return self.data_func(self.datas, **args)
 
-    def set_data(self, datas, data_func):
+    def set_data(self, datas, data_func=None):
         self.datas = datas
         self.data_func = data_func
         self.data_settled = True
-
-    def find_best_lr(self, **kwargs):
-        batch_size = self._parse_args(["batch_size"], **kwargs)
-        # load data
-        (x, y), (val_x, val_y), (_, _) = self._parse_datas(**kwargs)
-        # compile
-        self.compile(**kwargs)
-        # lr callback
-        lr_callback = LRFinder(x.shape[0], batch_size,
-                               minimum_lr=1e-4, maximum_lr=0.01, lr_scale='exp', save_dir="datas")
-        self._model.fit(x, y, epochs=1, batch_size=batch_size, callbacks=[lr_callback])
-        lr_callback.plot_schedule_from_file("datas")
 
     def compile(self, **kwargs):
         if not self.built:
@@ -385,8 +371,11 @@ class XTXModel(object):
                                   validation_data=(val_x, val_y))
         return history
 
+    def cross_train(self, **kwargs):
+        pass
+
     def retrain(self, **kwargs):
-        self._model = self._build_model(**kwargs)
+        self._model = self.build_model(**kwargs)
         self.compile(**kwargs)
         return self.train(**kwargs)
 
@@ -445,7 +434,115 @@ class XTXModel(object):
         pass
 
 
-class BaseMLP(XTXModel):
+class BaseMLP(Model):
+    def build_model(self, **kwargs):
+        # set status
+        # K.clear_session()
+        self.built = True
+        # parse args
+        batch_size, dropout, time_steps, model_type, norm_window_size, relu_alpha = \
+            self._parse_args([
+            "batch_size", "dropout", "time_steps", "model_type", "norm_window_size", "relu_alpha"
+        ], **kwargs)
+        levels = self._parse_args("levels", **kwargs)
+        scale = self._parse_args(["mlp_scale"], **kwargs) 
+        weight_decay  =self._parse_args(["weight_decay"], **kwargs)
+
+        # create model
+        nb_features = levels * 2
+        input_shape = (time_steps+norm_window_size-1, nb_features)
+        inputs = KL.Input(shape=input_shape)
+        x = inputs
+
+        preprocessing = self._parse_args("preprocessing")
+        if preprocessing is not None:
+            x = PreprocessingLayer(time_steps=time_steps,
+                                   norm_window_size=norm_window_size,
+                                   nb_features=nb_features,
+                                   batch_size=batch_size)(x)
+
+        x = KL.Flatten()(x)
+        nb_filters = [32, 64, 256]
+        for nb_filter in nb_filters:
+            x = dense_unit(x,
+                           nb_filter * scale,
+                           dropout=dropout,
+                           relu_alpha=relu_alpha,
+                           weight_decay=weight_decay)
+        x = dense_unit(x, 512*scale, dropout=0, relu_alpha=relu_alpha, weight_decay=weight_decay)
+
+        if model_type == 'regression':
+            x = KL.Dense(1, activation='tanh', use_bias=True)(x)
+            x = KL.Lambda(lambda x: 5*x)(x)
+        else:
+            x = KL.Dense(2, activation='softmax')(x)
+
+        outputs = x
+
+        return TFModel(inputs=inputs, outputs=outputs)
+
+
+class DiffMLP(Model):
+    def build_model(self, **kwargs):
+        # set status
+        # K.clear_session()
+        self.built = True
+        # parse args
+        batch_size, dropout, time_steps, model_type, norm_window_size, relu_alpha = \
+            self._parse_args([
+                "batch_size", "dropout", "time_steps", "model_type", "norm_window_size", "relu_alpha"
+            ], **kwargs)
+        levels = self._parse_args("levels", **kwargs)
+        scale = self._parse_args(["mlp_scale"], **kwargs)
+        weight_decay = self._parse_args(["weight_decay"], **kwargs)
+        channels = 2
+
+        # create model
+        nb_features = levels * 2
+        input_shape = (channels, time_steps + norm_window_size - 1, nb_features)
+        inputs = KL.Input(shape=input_shape)
+        x = inputs
+
+        preprocessing = self._parse_args("preprocessing")
+        if preprocessing is not None:
+            x = PreprocessingLayer(time_steps=time_steps,
+                                   norm_window_size=norm_window_size,
+                                   nb_features=nb_features,
+                                   batch_size=batch_size)(x)
+
+        x = KL.TimeDistributed(KL.Flatten())(x)
+
+        def timedistributed_dense_unit(_x, units, dropout=0.45, relu_alpha=0.1, weight_decay=0.0):
+            regularizer = regularizers.l2(weight_decay)
+            kernel_initializer = {0: 'glorot_uniform', 1: 'he_normal', 2: 'he_uniform'}[0]
+            _x = KL.TimeDistributed(KL.Dense(units,
+                         kernel_initializer=kernel_initializer,
+                         kernel_regularizer=regularizer))(_x)
+            _x = KL.LeakyReLU(alpha=relu_alpha)(_x)
+            _x = KL.TimeDistributed(KL.Dropout(dropout))(_x)
+            return _x
+
+        nb_filters = [32, 64, 256]
+        for nb_filter in nb_filters:
+            x = timedistributed_dense_unit(x,
+                           nb_filter * scale,
+                           dropout=dropout,
+                           relu_alpha=relu_alpha,
+                           weight_decay=weight_decay)
+        x = timedistributed_dense_unit(x,
+                                       512 * scale,
+                                       dropout=0, relu_alpha=relu_alpha, weight_decay=weight_decay)
+
+        x = KL.TimeDistributed(KL.Dense(1, activation='tanh'))(x)
+        x = KL.TimeDistributed(KL.Lambda(lambda x: 5 * x))(x)
+
+        outputs = x
+
+        return TFModel(inputs=inputs, outputs=outputs)
+
+
+
+class ConditionMLP(Model):
     def _build_model(self, **kwargs):
         # set status
         K.clear_session()
@@ -457,17 +554,15 @@ class BaseMLP(XTXModel):
         ], **kwargs)
         levels = self._parse_args("levels", **kwargs)
         scale = self._parse_args(["mlp_scale"], **kwargs) # default 8
-        weight_decay  =self._parse_args(["weight_decay"], **kwargs)
+        weight_decay = self._parse_args(["weight_decay"], **kwargs)
+        pass_alpha = self._parse_args("pass_alpha", **kwargs)
 
         # create model
-        nb_features = levels * 4
+        nb_features = levels * 2
         input_shape = (time_steps+norm_window_size-1, nb_features)
         # inputs: [time_step, features]
         inputs = KL.Input(batch_shape=(batch_size,) + input_shape)
-        x = PreprocessingLayer(time_steps=time_steps,
-                               norm_window_size=norm_window_size,
-                               nb_features=nb_features,
-                               batch_size=batch_size)(inputs)
+        x = inputs
         x = KL.Flatten()(x)
 
         nb_filters = [32, 64, 256]
@@ -477,37 +572,42 @@ class BaseMLP(XTXModel):
                            dropout=dropout,
                            relu_alpha=relu_alpha,
                            weight_decay=weight_decay)
-        x = dense_unit(x, 256*scale, dropout=0, relu_alpha=relu_alpha, weight_decay=weight_decay)
+        x0 = dense_unit(x, 256*scale, dropout=0, relu_alpha=relu_alpha, weight_decay=weight_decay)
+        x1 = dense_unit(x, 256*scale, dropout=0, relu_alpha=relu_alpha, weight_decay=weight_decay)
 
-        if model_type == 'regression':
-            x = KL.Dense(1, activation='linear')(x)
-        else:
-            x = KL.Dense(2, activation='softmax')(x)
+        x0 = KL.Dense(1, activation='linear')(x0)
+        x1 = KL.Dense(1, activation='sigmoid')(x1)
+        x = ConditionPass(pass_alpha)([x0, x1])
 
         outputs = x
 
-        return Model(inputs=inputs, outputs=outputs)
+        return TFModel(inputs=inputs, outputs=outputs)
 
-
-class LSTMFCN(XTXModel):
+class LSTMFCN(Model):
     def _build_model(self, **kwargs):
         self.built = True
-        # inputs
+        # arguments
         batch_size, input_shape, dropout, time_steps, model_type, norm_window_size = \
             self._parse_args([
             "batch_size", "input_shape", "dropout", "time_steps", "model_type", "norm_window_size"
         ], **kwargs)
-        nb_features = input_shape[1]
+        levels = self._parse_args("levels", **kwargs)
+        nb_features = levels * 2
+        preprocessing = self._parse_args("preprocessing")
+
+        # inputs
+        input_shape = (time_steps+norm_window_size-1, nb_features)
         # inputs: [time_step, features]
         inputs = KL.Input(batch_shape=(batch_size,) + input_shape)
 
         # lstm branch
         # dimension shuffle
         lstm_x = inputs
-        lstm_x = PreprocessingLayer(time_steps=time_steps,
-                                    norm_window_size=norm_window_size,
-                                    nb_features=nb_features,
-                                    batch_size=batch_size)(lstm_x)
+        if preprocessing is not None:
+            lstm_x = PreprocessingLayer(time_steps=time_steps,
+                                        norm_window_size=norm_window_size,
+                                        nb_features=nb_features,
+                                        batch_size=batch_size)(lstm_x)
 
         lstm_x = KL.Reshape((1, time_steps * input_shape[1]))(lstm_x)
         # lstm
@@ -535,11 +635,14 @@ class LSTMFCN(XTXModel):
         else:
             x = KL.Dense(2, activation='softmax')(x)
 
-        return Model(inputs=inputs, outputs=x)
+        return TFModel(inputs=inputs, outputs=x)
 
-class DeepLOB(XTXModel):
+
+class DeepLOB(Model):
     def _build_model(self):
         self.built = True
+
+
 
 if __name__ == '__main__':
     from xtx_config import XTXConfig

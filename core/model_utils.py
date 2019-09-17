@@ -1,17 +1,17 @@
 
 from xtx_config import XTX_Config
 from xtx_model import BaseMLP
-from OneCycle.clr import LRFinder
+from core.clr import LRFinder
 from dataset import XTXDataset
 from core.dataset_utils import ema
 
-from keras.optimizers import SGD
-import keras.backend as K
-from tensorflow.python.keras import backend as K
-K.set_value()
+from tensorflow.keras.optimizers import SGD
+import tensorflow.keras.backend as K
 
 import os
+import copy
 import datetime
+import numpy as np
 import matplotlib.pyplot as plt
 
 
@@ -19,6 +19,7 @@ import matplotlib.pyplot as plt
 class HyperFinder:
     def __init__(self, model_cls, model_args, data, data_func, root_dir='datas'):
         self.model_cls = model_cls
+        # self.model_args = copy.deepcopy(model_args)
         self.model_args = model_args
         self.data = data
         self.data_func = data_func
@@ -111,26 +112,45 @@ class HyperFinder:
         self._vis('Weight Decay', labels, dirs, begin, end)
 
 
-if __name__ == '__main__':
-    import numpy as np
-    import dataset as dt
-    def data_func(datas, time_steps=15, norm_window_size=10, levels=15):
-        mid_price = datas.mid_rate
-        n = 87
-        y = mid_price[n:] - mid_price[:-n]
-        x = datas.features[:-n]
+def finder_demo():
+    from core.dataset_utils import data_func
 
-        x = np.concatenate([x[..., i * 15:i * 15 + levels] for i in range(4)], axis=-1)
-
-        x, y = dt.data_sliding(x, y, time_step=time_steps + norm_window_size - 1)
-        (train_x, train_y), (val_x, val_y), (test_x, test_y) = dt.split_data([x, y], split=[0.6, 0.1, 0.3], sampling=5)
-
-        train_valid = train_x.shape[0] // 256 * 256
-        val_valid = val_x.shape[0] // 256 * 256
-
-        return (train_x[:train_valid], train_y[:train_valid]), (val_x[:val_valid], val_y[:val_valid]), (test_x, test_y)
-    # load data
+    # read data
     dataset = XTXDataset()
     dataset.delete_invalid_rows()
-    # best lr
-    finder = HyperFinder(BaseMLP, XTX_Config, dataset)
+
+    # create finder
+    finder = HyperFinder(BaseMLP, XTX_Config, dataset, data_func=data_func)
+
+    # find best learning rate
+    finder.find_lr(min_lr=1e-6, max_lr=1)
+    finder.vis_lr(begin=500, end=-200)
+    # set learning rate
+    lr = float(input("set learning rate:"))
+    finder.set_best_lr(lr)
+
+    # find best momentum
+    momentums = [0.85, 0.9, 0.95, 0.99, 0.999]
+    finder.find_momentum(momentums)
+    finder.vis_momentum(momentums, begin=500, end=-200)
+    # set best momentum
+    momentum = float(input("set best momentum:"))
+    finder.set_best_momentum(momentum)
+
+    # find besr weight decay
+    weight_decays = [np.power(0.1, x) for x in np.arange(1, 3, 1)]
+    weight_decays.append(0)
+    finder.find_weight_decay(weight_decays)
+    finder.vis_weight_decay(weight_decays, begin=900, end=-200)
+    # set weight decay
+    weight_decay = float(input("set weight decay:"))
+
+    # show res
+    print("The best hyperparameter for " + BaseMLP.__name__ + " : \n",
+          "learning rate: " + str(lr) + '\n',
+          "     momentum: " + str(momentum) + '\n',
+          " weight_decay: " + str(weight_decay))
+
+
+if __name__ == '__main__':
+    pass

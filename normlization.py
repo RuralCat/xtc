@@ -1,7 +1,6 @@
 
 import numpy as np
 import pickle
-from numba import jit
 
 def norm_by_step(data):
     normed_data = np.zeros(data.shape, dtype=data.dtype)

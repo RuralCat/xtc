@@ -1,3 +1,4 @@
+import copy
 import datetime
 import os
 
@@ -103,6 +104,71 @@ def ma(x, n):
     return np.mean(y, axis=1)
 
 
+def data_func(datas, time_steps=15, norm_window_size=10, levels=15, delay=87):
+    mid_price = datas.mid_rate
+    y = mid_price[delay:] - mid_price[:-delay]
+    x = datas.features[:-delay]
+
+    x = np.concatenate([x[..., i * 15:i * 15 + levels] for i in range(4)], axis=-1)
+
+    x, y = data_sliding(x, y, time_step=time_steps + norm_window_size - 1)
+    (train_x, train_y), (val_x, val_y), (test_x, test_y) = split_data([x, y], split=[0.6, 0.1, 0.3], sampling=5)
+
+    train_valid = train_x.shape[0] // 256 * 256
+    val_valid = val_x.shape[0] // 256 * 256
+
+    return (train_x[:train_valid], train_y[:train_valid]), (val_x[:val_valid], val_y[:val_valid]), (test_x, test_y)
+
+
+def volume_data(datas, time_steps, norm_window_size=1, levels=15, delay=87, split=True):
+    #
+    features = copy.deepcopy(datas.features[:-delay])
+    label_y = datas.mid_rate[delay:] - datas.mid_rate[:-delay]
+
+    ask_rate = np.log10(features[..., 15:15 + levels])
+    bid_rate = np.log10(features[..., 45:45 + levels])
+    x = np.concatenate([ask_rate, bid_rate], axis=-1)
+    x, y = data_sliding(x, label_y, time_step=time_steps + norm_window_size - 1)
+
+    if split:
+        (train_x, train_y), (val_x, val_y), (test_x, test_y) = split_data([x, y], split=[0.6, 0.1, 0.3], sampling=5)
+
+        train_valid = train_x.shape[0] // 256 * 256
+        val_valid = val_x.shape[0] // 256 * 256
+
+        return (train_x[:train_valid], train_y[:train_valid]), (val_x[:val_valid], val_y[:val_valid]), (test_x, test_y)
+    else:
+        return x, y
+
+
+def volume_date_stand_label(datas, time_steps, norm_window_size=1, levels=15, delay=87):
+    features = copy.deepcopy(datas.features[:-delay])
+    label_y = datas.mid_rate[delay:] - datas.mid_rate[:-delay]
+
+    ask_rate = np.log10(features[..., 15:15 + levels])
+    bid_rate = np.log10(features[..., 45:45 + levels])
+    x = np.concatenate([ask_rate, bid_rate], axis=-1)
+    x, y = data_sliding(x, label_y, time_step=time_steps + norm_window_size - 1)
+
+    (train_x, train_y), (val_x, val_y), (test_x, test_y) = split_data([x, y], split=[0.6, 0.1, 0.3], sampling=5)
+
+    return (train_x, train_y), (val_x, val_y), (test_x, test_y)
+
+
+def volume_data_norm(datas, time_steps, norm_window_size=1, levels=5):
+    features = copy.deepcopy(datas.features)
+    label_y = copy.deepcopy(datas.label_y)
+
+    ask_rate = features[..., 15:15 + levels]
+    bid_rate = features[..., 45:45 + levels]
+    x = np.concatenate([ask_rate, bid_rate], axis=-1)
+    x, y = data_sliding(x, label_y, time_step=time_steps + norm_window_size - 1)
+
+    (train_x, train_y), (val_x, val_y), (test_x, test_y) = split_data([x, y], split=[0.6, 0.1, 0.3], sampling=5)
+
+    return (train_x, train_y), (val_x, val_y), (test_x, test_y)
+
+
 class CSVRecord():
     def __init__(self, heads, dir="datas/records", filename=None):
         if filename is None:
@@ -120,10 +186,11 @@ class CSVRecord():
         s = ""
         for i in range(len(params)):
             s += str(params[i]) + ","
-        s = s + str(min_train_loss) + "," +str(min_val_loss) + "," + str(val_score) + "," + str(test_score) + '\n'
+        s = s + str(min_train_loss) + "," + str(min_val_loss) + "," + str(val_score) + "," + str(test_score) + '\n'
         with open(self._filename, 'a') as f:
-           f.write(s)
+            f.write(s)
 
     def print_record(self):
         csv = pandas.read_csv(self._filename)
         print(csv)
+

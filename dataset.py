@@ -3,7 +3,8 @@ import os
 import pickle
 import numpy as np
 import pandas as pd
-from keras.utils import Sequence
+# from keras.utils import Sequence
+from tensorflow.keras.utils import Sequence
 
 from core.dataset_utils import data_sliding
 from core.dataset_utils import ema
@@ -32,7 +33,7 @@ days_index = [
     1153404, 1209507, 1342361, 1390259, 1437723, 1486955, 1545235,
     1603361, 1658726, 1718263, 1777602, 1877675, 1912710, 2022189,
     2081213, 2198907, 2271018, 2341003, 2467227, 2515866, 2573037,
-    2677551, 2732082, 2788996, 2856131, 2971348
+    2677551, 2732082, 2788996, 2856131, 2971348, 3000000
 ]
 
 days_index_nonzero = [
