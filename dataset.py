@@ -44,6 +44,7 @@ days_index_nonzero = [
     2022200, 2081225, 2198924, 2271031, 2341017, 2467236, 2515868,
     2573070, 2677555, 2732084, 2789011, 2856151, 2971364
 ]
+# index_nonzero should + 1
 
 
 class XTXDataset:
@@ -77,6 +78,16 @@ class XTXDataset:
         days_data += [self.raw_data[days_index[-1]:]]
 
         return days_data
+
+    def days_start_index(self, delete_invalid=True):
+        if delete_invalid:
+            invalid_num = np.asarray(days_index_nonzero) - np.asarray(days_index[:-1])
+            invalid_num[0] += 1
+            return np.asarray(days_index_nonzero) + 1 - np.cumsum(invalid_num)
+        else:
+            start_index = np.asarray(days_index)
+            start_index[1:] += 1
+            return start_index
 
     @property
     def features(self):

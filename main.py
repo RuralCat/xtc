@@ -54,3 +54,4 @@ if __name__ == '__main__':
     print("val_score:", score(val_y, mlp_model.predict(val_x)))
     print("test_score:", score(test_y, mlp_model.predict(test_x)))
 
+from keras.layers import GRU

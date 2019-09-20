@@ -16,7 +16,7 @@ from core.clr import OneCycleLR
 
 monitor = 'val_loss'
 earlystopping = EarlyStopping(monitor=monitor, min_delta=1e-4,
-                              patience=25, verbose=1,
+                              patience=15, verbose=1,
                               restore_best_weights=True, mode='min')
 checkpoint = ModelCheckpoint('', monitor=monitor,
                              verbose=1, save_best_only=True)

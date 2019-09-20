@@ -473,7 +473,7 @@ class BaseMLP(Model):
 
         if model_type == 'regression':
             x = KL.Dense(1, activation='tanh', use_bias=True)(x)
-            x = KL.Lambda(lambda x: 5*x)(x)
+            # x = KL.Lambda(lambda x: 5*x)(x)
         else:
             x = KL.Dense(2, activation='softmax')(x)
 
